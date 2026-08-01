@@ -1,0 +1,21 @@
+node_modules/
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/blob-report/
+
+# PocketBase lokale Testinstanzen / Binaries (nicht Teil des Repos)
+pocketbase/pb_data/
+pocketbase/*.zip
+pocketbase/pocketbase
+pb_data/
+*.db
+*.db-shm
+*.db-wal
+
+# Betriebssystem / Editor
+.DS_Store
+*.log
+
+# Playwright-Browser (lokal, nicht ins Repo)
+.pw-browsers/
