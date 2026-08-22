@@ -1,7 +1,7 @@
 # HANDOVER — Sabbatjahr-App
 
 > Kanonische Übergabedatei dieses Projekts. Immer HIER aktualisieren, keine neuen Versions-Dateien.
-> Letztes Update: **01.08.2026, Sonnet-Session (CI-Gate + GitHub Pages Deploy vorbereitet)**
+> Letztes Update: **21.08.2026, Sonnet-Session (Termine-Import aus JSON-Datei, `SJ_VERSION` 1.1.0)**
 
 ## Projekt
 
@@ -36,12 +36,84 @@ PocketBase-Account ein und pflegt alle vier Module produktiv.
 - [x] **CI-Gate + GitHub Pages Deploy vorbereitet (Sonnet, 01.08.):** `.github/workflows/ci.yml`
       geschrieben, Repo `BenditoT/sabbatjahr` + Pages-Source „GitHub Actions" per Claude in
       Chrome angelegt → Details im nächsten Abschnitt
-- [ ] **Norberts EINER Push-Block** (unten) im Terminal.app ausführen → E2E laufen dann
-      automatisch in echtem Chromium auf GitHub Actions, bei Grün deployt Pages
+- [x] **Push ausgeführt (Norbert, 02.08.):** Commit `107ee43`, 24 Dateien. CI-Lauf
+      [#30722751190](https://github.com/BenditoT/sabbatjahr/actions/runs/30722751190)
+      **grün** (Playwright im echten Chromium ✅, Pages-Deploy ✅). Live-URL
+      [benditot.github.io/sabbatjahr](https://benditot.github.io/sabbatjahr/) antwortet
+      mit 200, Login-Maske per Screenshot verifiziert (Fable, 02.08.)
 - [ ] **Backend ausrollen: `pocketbase/RUNBOOK.md`, Variante A** (Admin-UI → Import
       collections → App-Account in `sj_users` → Auto-Backup). ⚠️ Schalter „Merge with the
       existing collections" MUSS an sein — sonst löscht der Import die anderen Apps.
 - [ ] Gemeinsamer Live-Test (Login, echte Daten eintragen)
+- [x] **Termine-Import aus JSON-Datei (Sonnet, 21.08.):** Timeline-Ansicht kann
+      `termine-events.json` (oder jede kompatible Datei) direkt einlesen — siehe Abschnitt
+      unten. Funktioniert in Demo- und PocketBase-Modus, `SJ_VERSION` → `1.1.0`.
+
+## Was am 21.08.2026 passiert ist (Sonnet, Termine-Import aus JSON-Datei)
+
+Norbert hatte 22 Konzerttermine fertig in `termine-events.json` liegen (Schema exakt
+`sj_events`), aber das Backend ist noch nicht ausgerollt. Er wollte die Termine trotzdem
+**sofort** in der Timeline sehen, ohne dass die Datei je das Repo oder gar seinen
+Rechner verlässt.
+
+**Bedienung:** Timeline-Ansicht → Knopf **„Termine importieren"** neben „+ Neuer
+Termin" öffnet den nativen Datei-Dialog (verstecktes `<input type="file"
+accept=".json,application/json">`). Die gewählte Datei wird ausschließlich clientseitig
+per `FileReader` gelesen — es gibt keinen Upload, keinen Netzwerk-Request für die Datei
+selbst. Danach erscheint ein Vorschau-Modal („X Termine gefunden, Y werden übersprungen
+(bereits vorhanden)" + die ersten 5 Titel mit Datum), erst ein Klick auf „N Termine
+übernehmen" schreibt sie wirklich. Abbrechen geht per Knopf oder ESC.
+
+**Was dabei umgesetzt wurde:**
+1. **Strikte Validierung vor jeder Übernahme** (`parseImportEvents`): Datei muss ein
+   JSON-Array sein, jeder Eintrag braucht ein nicht-leeres `title` und ein `date_start`
+   im Muster `JJJJ-MM-TT`. Schon der erste ungültige Eintrag bricht die gesamte Datei
+   ab — „validieren, bevor irgendetwas übernommen wird" heißt hier bewusst alles-oder-
+   nichts, nicht zeilenweise überspringen. Fehlermeldung kommt als Toast, verständlich
+   auf Deutsch, mit Eintrags-Nummer. Unbekannte `category`-Werte fallen automatisch auf
+   `sonstiges` zurück, unbekannte Felder werden ignoriert.
+2. **Duplikat-Schutz** (`eventDedupeKey` = `title.trim() + date_start`): vergleicht
+   gegen die aktuell geladenen Termine UND gegen bereits im selben Import gesehene
+   Einträge. Ein zweiter Import derselben Datei überspringt dadurch alles — gefahrlos
+   wiederholbar.
+3. **Beide Modi über denselben Weg:** Der Import ruft pro neuem Termin ganz normal
+   `dataService.createEvent(payload)` auf — exakt dieselbe Methode wie „+ Neuer
+   Termin". Kein Sonderpfad am DataService vorbei, `owner` wird im PocketBase-Modus
+   also korrekt gesetzt, im Demo-Modus landet der Termin im selben Mock-State.
+4. **ESC-Muster wiederverwendet:** Das Vorschau-Modal ist ein ganz normaler Aufruf von
+   `<Modal escRegister=...>` — dieselbe `useLayoutEffect`-Registrierung, die den
+   ESC-Bug vom 31.07. behebt (siehe Abschnitt oben). Kein neuer Modal-Code, keine neue
+   Falle.
+5. **Rückmeldung** über das vorhandene Toast-System: „18 Termine importiert, 4
+   übersprungen." Die Timeline zeigt neue Termine sofort (State-Update über
+   `onEventsChange`, kein Reload).
+
+**Verifiziert ohne Chromium** (Sandbox kann keinen Browser starten): Das komplette
+Modul-Skript aus `index.html` wurde extrahiert und mit `node --check` auf Syntaxfehler
+geprüft (grün). Die Validierungs- und Dedup-Logik (`parseImportEvents`,
+`eventDedupeKey`) wurde 1:1 aus der Datei kopiert und mit `node -e` gegen mehrere
+Fälle durchgespielt: gültige generische Fixture (3 Termine, ein unbekannter
+Kategoriewert fällt korrekt auf „sonstiges" zurück), Duplikat-Erkennung gegen
+bestehende Termine, zweiter Import derselben Datei (0 neue, 3 übersprungen — keine
+Duplikate), interne Duplikate innerhalb einer Datei, sowie fünf kaputte
+Datei-Varianten (kein JSON, kein Array, leeres Array, fehlender Titel, falsches
+Datumsformat) — alle liefern die erwartete deutsche Fehlermeldung statt eines
+Absturzes. Zusätzlich lässt `npx playwright test --list` den neuen Spec sauber
+kompilieren und listet beide neuen Tests korrekt auf (bestätigt: kein TS-/Syntaxfehler
+im Testfile) — der tatsächliche Chromium-Lauf bleibt wie beim Rest des Projekts GitHub
+Actions vorbehalten.
+
+**Neuer Test:** `tests/e2e/smoke-termine-import.spec.ts` (2 Tests) mit generischer
+Fixture `tests/fixtures/termine-import.json` (3 erfundene Termine, keine echten Daten).
+Test 1 importiert die Fixture, prüft die Vorschau-Zahlen und die drei Titel in der
+Timeline, importiert dieselbe Datei ein zweites Mal und prüft, dass alle 3 als
+Duplikate erkannt werden (Bestätigen-Knopf zeigt „0 Termine übernehmen" und ist
+deaktiviert) und kein Titel doppelt in der Timeline auftaucht. Test 2 lädt kaputtes
+JSON (per Buffer, keine echte Datei nötig) und prüft die Fehlermeldung sowie dass
+nichts importiert wurde.
+
+**Offen:** Der echte Chromium-Lauf in GitHub Actions steht noch aus (läuft automatisch
+beim nächsten Push). `termine-events.json` bleibt wie gehabt außerhalb des Repos.
 
 ## Was am 31.07. passiert ist (Opus)
 
@@ -190,16 +262,18 @@ Danach automatisch, ohne weiteres Zutun:
 
 1. ~~Opus: Backend~~ ✅ · ~~Sonnet: Frontend~~ ✅ · ~~Opus: ESC-Bug~~ ✅ ·
    ~~Sonnet: CI-Gate + Pages-Setup~~ ✅
-2. **Norbert: den Push-Block oben ausführen.** Danach laufen Tests + Deploy automatisch.
-3. Falls Actions rot wird: Report-Artifact auswerten (Skill
-   `flaky-ci-echter-bug-diagnose` — NICHT Timeouts hochsetzen, echten Bug suchen).
-4. **Backend ausrollen:** `pocketbase/RUNBOOK.md`, Variante A.
-5. Gemeinsamer Live-Test (Login, echte Daten, Reload-Prüfung)
+2. ~~Norbert: Push-Block~~ ✅ 02.08. — CI grün im echten Chromium, Pages live.
+3. **Backend ausrollen:** `pocketbase/RUNBOOK.md`, Variante A — Norbert loggt sich in
+   `https://pb.tangojam.de/_/` ein, Claude in Chrome übernimmt Import (⚠️ Merge-Schalter
+   AN) und Kontrolle; App-Passwort tippt Norbert.
+4. Gemeinsamer Live-Test (Login auf der Pages-URL, je ein Datensatz pro Modul,
+   Reload-Prüfung — Falle `normalizer-drift-reload-bug`)
 
 ## Dateien
 
 - `index.html` — die App (Preact+htm, Single-File)
-- `tests/e2e/` — 3 Smoke-Specs, `tests/fixtures/app.ts` (Login-Helper, `?forceMode=demo`)
+- `tests/e2e/` — 4 Smoke-Specs (inkl. `smoke-termine-import.spec.ts`), `tests/fixtures/app.ts`
+  (Login-Helper, `?forceMode=demo`), `tests/fixtures/termine-import.json` (generische Import-Fixture)
 - `.github/workflows/ci.yml` — Test-Gate (echtes Chromium) + Pages-Deploy bei Grün
 - `sprint sonnet sabbatjahr.md` — Frontend-Sprint (Deploy-Teil noch offen)
 - `sprint sonnet sabbatjahr-deploy.md` — CI/Deploy-Sprint (erledigt, dieses Update)
@@ -216,6 +290,33 @@ Danach automatisch, ohne weiteres Zutun:
   dem App-Passwort) — der Superuser darf alles.
 - **Auto-Backup** in den PocketBase-Settings einschalten. `pb_data/data.db` ist die
   einzige Kopie eines ganzen Sabbatjahrs an Reflexion.
+
+## Konzerttermine vorbereitet (20.08.2026)
+
+Norbert hat `Termine.csv` (Export aus seinem Kalender) geliefert: **23 Auftritte**
+vom 12.09.2026 bis 23.07.2027. Konvertiert nach `termine-events.json` — importfertig
+für `sj_events`, sobald das Backend steht (`owner` wird beim Import gesetzt).
+
+Konvertierungs-Entscheidungen (bewusst so, nicht raten):
+
+| Punkt | Entscheidung |
+|---|---|
+| Uhrzeiten | landen in `notes`, **nicht** in `date_start`. Grund: Modell und UI (`<input type="date">`, `isoDateOnly`) arbeiten datumsgenau — Uhrzeiten in Date-Feldern hätten einen Zeitzonen-Versatz erzeugt. |
+| `title` | `Formation — Ort/Venue` (z. B. „Cuarteto Bien Porteño — Mannheim, Tabakfabrik") |
+| `category` | `musik` für alle Auftritte, **`tango`** für den Bendito-Marathon (30.10.–01.11.) |
+| Mehrtägig | Spannen aus der CSV als `date_start`/`date_end` übernommen (Wochenend-/Anreisefenster) |
+| Schreibweisen | Formationsnamen normalisiert (Bien Porteño, Männer ohne Nerven, Bando Solo …) |
+
+⚠️ **Datenschutz:** `termine-events.json` und `Termine.csv` stehen in `.gitignore` —
+das Repo `BenditoT/sabbatjahr` ist **public**, Norberts Terminkalender gehört da nicht hin.
+
+**Von Norbert geklärt (20.08.2026) und eingearbeitet → jetzt 22 Events:**
+
+1. **Nürtingen war eine Doublette.** Auftritt ist **So, 13.12.2026**, der Samstag davor
+   sind Proben vor Ort. Beide Zeilen zu EINEM Event 12.–13.12. zusammengeführt, der
+   Ablauf steht in den `notes`.
+2. **Durlach (18.04.2027) ist unbestätigt** — im Titel als „(unbestätigt)" markiert
+   und in den `notes` mit Stand-Datum vermerkt.
 
 ## Wunschliste v2 (nicht v1!)
 

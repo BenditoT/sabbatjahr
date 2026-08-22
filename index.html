@@ -279,7 +279,7 @@
   // window.SJ_CONFIG kann vor dem Laden gesetzt werden, um die Backend-URL zu
   // überschreiben. Query-Parameter ?pbUrl=... hat Vorrang (nützlich zum Testen).
   window.SJ_CONFIG = window.SJ_CONFIG || { pbUrl: "https://pb.tangojam.de" };
-  window.SJ_VERSION = "1.0.0";
+  window.SJ_VERSION = "1.1.0";
 </script>
 
 <script type="module">
@@ -1189,9 +1189,99 @@ function EventModal({ event, onClose, onSave, escRegister }) {
   `;
 }
 
+/* =========================================================================
+   TERMINE-IMPORT (JSON-Datei, clientseitig, verlässt Norberts Rechner nie)
+   ========================================================================= */
+const EVENT_IMPORT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const EVENT_IMPORT_PREVIEW_COUNT = 5;
+
+function eventDedupeKey(title, dateStart) {
+  return (title || "").trim() + "||" + isoDateOnly(dateStart);
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Datei konnte nicht gelesen werden."));
+    reader.readAsText(file);
+  });
+}
+
+// Wirft bei JEDEM Problem sofort einen Error mit verständlicher deutscher
+// Meldung — "validieren, bevor irgendetwas übernommen wird" heißt: entweder
+// die ganze Datei ist gültig, oder es wird gar nichts importiert.
+function parseImportEvents(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    throw new Error("Die Datei enthält kein gültiges JSON.");
+  }
+  if (!Array.isArray(data)) {
+    throw new Error("Erwartet wird eine Liste von Terminen (JSON-Array).");
+  }
+  if (data.length === 0) {
+    throw new Error("Die Datei enthält keine Termine.");
+  }
+  return data.map((raw, i) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`Eintrag ${i + 1}: kein gültiges Objekt.`);
+    }
+    const title = typeof raw.title === "string" ? raw.title.trim() : "";
+    if (!title) throw new Error(`Eintrag ${i + 1}: "title" fehlt oder ist leer.`);
+    const dateStart = typeof raw.date_start === "string" ? raw.date_start.trim() : "";
+    if (!EVENT_IMPORT_DATE_RE.test(dateStart)) {
+      throw new Error(`Eintrag ${i + 1} ("${title}"): "date_start" muss dem Muster JJJJ-MM-TT entsprechen.`);
+    }
+    const dateEndRaw = typeof raw.date_end === "string" ? raw.date_end.trim() : "";
+    const dateEnd = EVENT_IMPORT_DATE_RE.test(dateEndRaw) ? dateEndRaw : "";
+    const category = EVENT_CATEGORIES.includes(raw.category) ? raw.category : "sonstiges";
+    return {
+      title,
+      date_start: dateStart,
+      date_end: dateEnd,
+      all_day: raw.all_day !== false,
+      category,
+      location: typeof raw.location === "string" ? raw.location : "",
+      url: typeof raw.url === "string" ? raw.url : "",
+      notes: typeof raw.notes === "string" ? raw.notes : "",
+    };
+  });
+}
+
+function ImportPreviewModal({ parsed, newEvents, duplicateCount, busy, onClose, onConfirm, escRegister }) {
+  const sample = parsed.slice(0, EVENT_IMPORT_PREVIEW_COUNT);
+  return html`
+    <${Modal} title="Termine importieren" onClose=${onClose} escRegister=${escRegister}>
+      <p>${parsed.length} Termine gefunden, ${duplicateCount} werden übersprungen (bereits vorhanden).</p>
+      ${sample.length > 0 && html`
+        <ul class="mini-list">
+          ${sample.map((ev, i) => html`
+            <li key=${i}>
+              <span>${ev.title}</span>
+              <span class="muted">${formatDeDate(ev.date_start)}</span>
+            </li>
+          `)}
+        </ul>
+      `}
+      ${newEvents.length === 0 && html`<p class="empty-state">Alle gefundenen Termine sind bereits vorhanden — nichts zu importieren.</p>`}
+      <div class="modal-footer">
+        <button class="btn btn-outline" onClick=${onClose} disabled=${busy}>Abbrechen</button>
+        <button class="btn btn-gold" onClick=${onConfirm} disabled=${busy || newEvents.length === 0}>
+          ${busy ? "Importiert …" : `${newEvents.length} Termine übernehmen`}
+        </button>
+      </div>
+    <//>
+  `;
+}
+
 function TimelineView({ events, dataService, onEventsChange, toast, escRegister }) {
   const [catFilter, setCatFilter] = useState("alle");
   const [modalEvent, setModalEvent] = useState(undefined);
+  const [importState, setImportState] = useState(null); // null | { parsed, newEvents, duplicateCount }
+  const [importBusy, setImportBusy] = useState(false);
+  const fileInputRef = useRef(null);
   const cd = useMemo(() => getCountdown(), []);
 
   const filtered = events
@@ -1239,10 +1329,71 @@ function TimelineView({ events, dataService, onEventsChange, toast, escRegister 
     } catch (err) { toast("Löschen fehlgeschlagen.", "error"); }
   }
 
+  function handleImportClick() {
+    if (fileInputRef.current) fileInputRef.current.click();
+  }
+  async function handleImportFileChange(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // erlaubt, dieselbe Datei ein zweites Mal auszuwählen
+    if (!file) return;
+    let parsed;
+    try {
+      const text = await readFileAsText(file);
+      parsed = parseImportEvents(text);
+    } catch (err) {
+      toast((err && err.message) || "Datei konnte nicht gelesen werden.", "error");
+      return;
+    }
+    const existingKeys = new Set(events.map((ev) => eventDedupeKey(ev.title, ev.date_start)));
+    const seen = new Set();
+    const newEvents = [];
+    let duplicateCount = 0;
+    parsed.forEach((ev) => {
+      const key = eventDedupeKey(ev.title, ev.date_start);
+      if (existingKeys.has(key) || seen.has(key)) { duplicateCount++; return; }
+      seen.add(key);
+      newEvents.push(ev);
+    });
+    setImportState({ parsed, newEvents, duplicateCount });
+  }
+  function handleImportCancel() {
+    setImportState(null);
+  }
+  async function handleImportConfirm() {
+    if (!importState || importState.newEvents.length === 0) return;
+    setImportBusy(true);
+    const created = [];
+    let failed = false;
+    for (const payload of importState.newEvents) {
+      try {
+        const rec = await dataService.createEvent(payload);
+        created.push(rec);
+      } catch (err) {
+        console.error(err);
+        failed = true;
+        break;
+      }
+    }
+    if (created.length) onEventsChange([...events, ...created]);
+    setImportBusy(false);
+    const duplicateCount = importState.duplicateCount;
+    setImportState(null);
+    if (failed) {
+      toast(`${created.length} Termine importiert, ${duplicateCount} übersprungen. Beim Rest ist ein Fehler aufgetreten — bitte erneut versuchen.`, "error");
+    } else {
+      toast(`${created.length} Termine importiert, ${duplicateCount} übersprungen.`, "success");
+    }
+  }
+
   return html`
     <div data-view-content="timeline">
       <div class="section-title"><h2>Timeline</h2>
-        <button class="btn btn-gold btn-sm" onClick=${() => setModalEvent(null)}>+ Neuer Termin</button>
+        <div style=${{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <button class="btn btn-outline btn-sm" id="importEventsBtn" onClick=${handleImportClick}>Termine importieren</button>
+          <input type="file" id="importEventsFile" accept=".json,application/json"
+            style=${{ display: "none" }} ref=${fileInputRef} onChange=${handleImportFileChange} />
+          <button class="btn btn-gold btn-sm" onClick=${() => setModalEvent(null)}>+ Neuer Termin</button>
+        </div>
       </div>
       <div class="chip-row">
         <button class="chip ${catFilter === "alle" ? "active" : ""}" onClick=${() => setCatFilter("alle")}>Alle Kategorien</button>
@@ -1281,6 +1432,11 @@ function TimelineView({ events, dataService, onEventsChange, toast, escRegister 
         `}
       ${modalEvent !== undefined && html`
         <${EventModal} event=${modalEvent} onClose=${() => setModalEvent(undefined)} onSave=${handleSave} escRegister=${escRegister} />
+      `}
+      ${importState && html`
+        <${ImportPreviewModal} parsed=${importState.parsed} newEvents=${importState.newEvents}
+          duplicateCount=${importState.duplicateCount} busy=${importBusy}
+          onClose=${handleImportCancel} onConfirm=${handleImportConfirm} escRegister=${escRegister} />
       `}
     </div>
   `;

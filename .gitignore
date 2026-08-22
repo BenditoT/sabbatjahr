@@ -13,6 +13,11 @@ pb_data/
 *.db-shm
 *.db-wal
 
+# Persönliche Daten — NICHT ins öffentliche Repo
+# (Auftrittstermine sind Norberts Kalender; das Repo BenditoT/sabbatjahr ist public)
+termine-events.json
+Termine.csv
+
 # Betriebssystem / Editor
 .DS_Store
 *.log

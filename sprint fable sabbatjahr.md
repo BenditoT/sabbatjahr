@@ -147,9 +147,9 @@ Konkret in diesem Projekt schon passiert und nicht zu wiederholen:
       (Runbook Variante A — Merge-Schalter AN!).
 - [ ] Norberts App-Account existiert, Login-Test erfolgreich.
       → Wartet auf denselben PB-Admin-Login (Passwort tippt Norbert).
-- [x] `BenditoT/sabbatjahr` existiert (per Claude in Chrome angelegt), CI-Workflow liegt
-      bereit. Tests im echten Chromium laufen automatisch nach Norberts Push-Block.
-- [ ] Pages-URL live — deployt automatisch bei grünem CI nach dem Push.
+- [x] `BenditoT/sabbatjahr` existiert, CI gelaufen: Lauf #30722751190 **grün im echten
+      Chromium** (Push `107ee43`, Norbert 02.08.).
+- [x] Pages-URL live (HTTP 200) und per Screenshot verifiziert (Fable, 02.08.).
 - [ ] Ein echter Datensatz je Modul, Reload-Prüfung — nach Backend-Rollout + Deploy.
 - [x] `HANDOVER.md` und Dashboard-Eintrag (`"id": "sabbatjahr"`) aktualisiert.
 - [x] Abschluss an Norbert: klickbare Links, EIN Terminal-Befehl, „Was Norbert jetzt tut".

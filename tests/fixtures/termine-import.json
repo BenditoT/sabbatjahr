@@ -1,0 +1,32 @@
+[
+  {
+    "title": "E2E Test Konzert Alpha",
+    "date_start": "2027-03-01",
+    "date_end": "",
+    "all_day": true,
+    "category": "musik",
+    "location": "Teststadt",
+    "url": "",
+    "notes": "Generische Fixture für den Playwright-Smoke-Test — keine echten Termine."
+  },
+  {
+    "title": "E2E Test Workshop Beta",
+    "date_start": "2027-03-15",
+    "date_end": "2027-03-16",
+    "all_day": true,
+    "category": "sonstiges",
+    "location": "",
+    "url": "",
+    "notes": ""
+  },
+  {
+    "title": "E2E Test Familientreffen Gamma",
+    "date_start": "2027-04-02",
+    "date_end": "",
+    "all_day": true,
+    "category": "familie",
+    "location": "",
+    "url": "",
+    "notes": ""
+  }
+]
